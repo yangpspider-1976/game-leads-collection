@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getEmailTemplateAttachmentForSend } from "@/lib/email-template";
 import { canRecordEmailWithoutSmtp, emailForOpportunityWithTemplate, sendLeadEmail, smtpConfigured } from "@/lib/mailer";
+import { nonKoreanCompanyWhere } from "@/lib/korea-exclusion";
 import { prisma } from "@/lib/prisma";
 
 const requestSchema = z.object({
@@ -82,7 +83,7 @@ export async function POST(request: Request) {
   const leads = await prisma.opportunity.findMany({
     where: {
       id: { in: leadIds },
-      company: { contactEmail: { not: null } }
+      company: { contactEmail: { not: null }, ...nonKoreanCompanyWhere }
     },
     include: { company: true, game: true, outreachMessages: true }
   });

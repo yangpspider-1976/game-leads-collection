@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Company, Game, Opportunity, OutreachMessage } from "@prisma/client";
 import { getDebugSettings } from "@/lib/operations-settings";
+import { isKoreanCompany } from "./korea-exclusion";
 import { buildEmailDraft } from "./outreach";
 
 type OpportunityWithContext = Opportunity & {
@@ -92,6 +93,9 @@ function emailSafeCompanyName(name: string) {
 }
 
 export async function sendLeadEmail(opportunity: OpportunityWithContext, input: EmailTemplateInput = {}) {
+  if (isKoreanCompany(opportunity.company)) {
+    throw new Error("Email sending is disabled for Korean companies.");
+  }
   const recipient = opportunity.company.contactEmail;
   if (!recipient) throw new Error(`${opportunity.company.name} does not have a contact email`);
 

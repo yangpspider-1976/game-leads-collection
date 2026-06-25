@@ -1,11 +1,13 @@
 import { Shell } from "@/components/shell";
 import { LeadEnrichmentTable } from "@/components/lead-enrichment-table";
 import { getEmailBodyTemplate } from "@/lib/email-template";
+import { nonKoreanCompanyWhere } from "@/lib/korea-exclusion";
 import { prisma } from "@/lib/prisma";
 
 export default async function LeadsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const params = await searchParams;
   const companyWhere = {
+    ...nonKoreanCompanyWhere,
     ...(params.country ? { country: params.country } : {}),
     ...(params.enrichmentStatus ? { enrichmentStatus: params.enrichmentStatus } : {}),
     ...(params.emailStatus === "has_email" ? { contactEmail: { not: null } } : {}),
@@ -23,7 +25,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
       include: { company: true, game: true, article: { include: { source: true } } },
       orderBy: [{ grade: "asc" }, { score: "desc" }]
     }),
-    prisma.company.findMany({ select: { country: true }, distinct: ["country"], orderBy: { country: "asc" } }),
+    prisma.company.findMany({ where: nonKoreanCompanyWhere, select: { country: true }, distinct: ["country"], orderBy: { country: "asc" } }),
     prisma.game.findMany({ select: { launchStage: true }, distinct: ["launchStage"], orderBy: { launchStage: "asc" } }),
     getEmailBodyTemplate()
   ]);

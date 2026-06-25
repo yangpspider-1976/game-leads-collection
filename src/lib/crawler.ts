@@ -2,6 +2,7 @@ import Parser from "rss-parser";
 import * as cheerio from "cheerio";
 import { prisma } from "./prisma";
 import { contentHash } from "./analysis";
+import { isKoreanArticle, isKoreanSource } from "./korea-exclusion";
 import { crawlerHeaders, discoverRss, extractHtmlLinks } from "./source-validation";
 
 const parser = new Parser({
@@ -14,7 +15,9 @@ export async function crawlActiveSources(options: { maxArticles?: number } = {})
   let articlesSaved = 0;
   const errors: string[] = [];
 
-  const sources = await prisma.source.findMany({ where: { active: true }, orderBy: [{ priority: "asc" }, { name: "asc" }] });
+  const sources = (await prisma.source.findMany({ where: { active: true }, orderBy: [{ priority: "asc" }, { name: "asc" }] })).filter(
+    (source) => !isKoreanSource(source)
+  );
   await crawlSources(orderSourcesForCrawl(sources), { runId: run.id, articlesFound, articlesSaved, errors, articleLimit: options.maxArticles });
 
   const finalRun = await prisma.crawlRun.findUniqueOrThrow({ where: { id: run.id } });
@@ -23,6 +26,10 @@ export async function crawlActiveSources(options: { maxArticles?: number } = {})
 
 export async function crawlSingleSource(sourceId: string) {
   const source = await prisma.source.findUniqueOrThrow({ where: { id: sourceId } });
+  if (isKoreanSource(source)) {
+    const run = await prisma.crawlRun.create({ data: { status: "success", finishedAt: new Date(), articlesFound: 0, articlesSaved: 0 } });
+    return { articlesFound: run.articlesFound, articlesSaved: run.articlesSaved, errors: [] };
+  }
   const run = await prisma.crawlRun.create({ data: { status: "running" } });
   const state = { runId: run.id, articlesFound: 0, articlesSaved: 0, errors: [] as string[] };
   await crawlSources([source], state);
@@ -40,7 +47,9 @@ async function crawlSources(
       const collected = await collectSourceItems(source);
       const sourceLimit = source.maxItemsPerRun ?? Number(process.env.MAX_ITEMS_PER_SOURCE ?? 30);
       const remainingLimit = state.articleLimit ? Math.max(state.articleLimit - state.articlesSaved, 0) : sourceLimit;
-      const selectedArticles = collected.slice(0, Math.min(sourceLimit, remainingLimit));
+      const selectedArticles = collected
+        .filter((article) => !isKoreanArticle({ ...article, source }))
+        .slice(0, Math.min(sourceLimit, remainingLimit));
       state.articlesFound += selectedArticles.length;
       for (const article of selectedArticles) {
         const hash = contentHash(`${article.title}|${article.url}|${article.rawContent}`);

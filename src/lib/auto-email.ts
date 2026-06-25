@@ -3,6 +3,7 @@ import { getEmailBodyTemplate, getEmailTemplateAttachmentForSend } from "@/lib/e
 import { enrichOpportunityLead } from "@/lib/lead-enrichment";
 import { canRecordEmailWithoutSmtp, emailForOpportunityWithTemplate, sendLeadEmail, smtpConfigured } from "@/lib/mailer";
 import { getOperationsSettings } from "@/lib/operations-settings";
+import { isKoreanCompany, nonKoreanCompanyWhere } from "@/lib/korea-exclusion";
 import { prisma } from "@/lib/prisma";
 
 export async function runAutomaticEmailPass() {
@@ -37,24 +38,50 @@ export async function runAutomaticEmailPass() {
     return { skipped: true, reason: "daily_limit_reached", sent: 0, failed: 0 };
   }
 
-  const candidates = await prisma.opportunity.findMany({
+  const baseCandidateWhere = {
+    grade: "A",
+    company: nonKoreanCompanyWhere,
+    outreachMessages: { none: { channel: "email", status: "sent" } }
+  };
+  const totalGradeACandidates = await prisma.opportunity.count({ where: baseCandidateWhere });
+  if (totalGradeACandidates === 0) {
+    return { skipped: true, reason: "no_grade_a_candidates", sent: 0, failed: 0, candidatesChecked: 0, withoutEmail: 0 };
+  }
+
+  const readyCandidates = await prisma.opportunity.findMany({
     where: {
-      grade: "A",
-      outreachMessages: { none: { channel: "email", status: "sent" } }
+      ...baseCandidateWhere,
+      company: { ...nonKoreanCompanyWhere, contactEmail: { not: null } }
     },
     include: { company: true, game: true, outreachMessages: true },
     orderBy: [{ score: "desc" }, { createdAt: "desc" }],
-    take: Math.min(Math.max(remaining * 3, remaining), 50)
+    take: remaining
   });
-  if (candidates.length === 0) {
-    return { skipped: true, reason: "no_grade_a_candidates", sent: 0, failed: 0, candidatesChecked: 0, withoutEmail: 0 };
+
+  const uncheckedEnrichmentLimit = Math.min(Math.max(remaining * 3, settings.maxLeadAnalysisLimit), 50);
+  const uncheckedCandidates = await prisma.opportunity.findMany({
+    where: {
+      ...baseCandidateWhere,
+      company: {
+        ...nonKoreanCompanyWhere,
+        contactEmail: null,
+        OR: [{ enrichmentStatus: "not_started" }, { lastEnrichedAt: null }]
+      }
+    },
+    include: { company: true, game: true, outreachMessages: true },
+    orderBy: [{ score: "desc" }, { createdAt: "desc" }],
+    take: uncheckedEnrichmentLimit
+  });
+
+  const seenCandidateIds = new Set<string>();
+  const prioritizedCandidates = [...readyCandidates, ...uncheckedCandidates].filter((candidate) => {
+    if (seenCandidateIds.has(candidate.id)) return false;
+    seenCandidateIds.add(candidate.id);
+    return true;
+  });
+  if (prioritizedCandidates.length === 0) {
+    return { skipped: true, reason: "no_email_ready_leads", sent: 0, failed: 0, candidatesChecked: 0, withoutEmail: 0 };
   }
-  function emailCandidatePriority(candidate: (typeof candidates)[number]) {
-    if (candidate.company.contactEmail) return 0;
-    if (candidate.company.enrichmentStatus === "not_started" || !candidate.company.lastEnrichedAt) return 1;
-    return 2;
-  }
-  const prioritizedCandidates = [...candidates].sort((a, b) => emailCandidatePriority(a) - emailCandidatePriority(b));
 
   const bodyTemplate = await getEmailBodyTemplate();
   const defaultAttachments = await getEmailTemplateAttachmentForSend();
@@ -66,6 +93,9 @@ export async function runAutomaticEmailPass() {
     if (sent >= remaining) break;
     candidatesChecked += 1;
     try {
+      if (isKoreanCompany(candidate.company)) {
+        continue;
+      }
       let refreshed = candidate;
       if (!candidate.company.contactEmail) {
         const lead = await enrichOpportunityLead(candidate.id);
@@ -77,6 +107,9 @@ export async function runAutomaticEmailPass() {
           where: { id: candidate.id },
           include: { company: true, game: true, outreachMessages: true }
         });
+      }
+      if (isKoreanCompany(refreshed.company)) {
+        continue;
       }
       const result = await sendLeadEmail(refreshed, { subjectTemplate: emailSubjectTemplate, bodyTemplate, attachments: defaultAttachments });
       const draft = emailForOpportunityWithTemplate(refreshed, { subjectTemplate: emailSubjectTemplate, bodyTemplate });

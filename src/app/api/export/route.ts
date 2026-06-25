@@ -1,3 +1,4 @@
+import { nonKoreanCompanyWhere } from "@/lib/korea-exclusion";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: Request) {
@@ -8,7 +9,10 @@ export async function GET(request: Request) {
   const leads = await prisma.opportunity.findMany({
     where: {
       ...(grade ? { grade } : {}),
-      ...(type === "enriched" ? { company: { enrichmentStatus: { in: ["completed", "partial", "manual_review"] } } } : {})
+      company: {
+        ...nonKoreanCompanyWhere,
+        ...(type === "enriched" ? { enrichmentStatus: { in: ["completed", "partial", "manual_review"] } } : {})
+      }
     },
     include: { company: true, game: true, article: { include: { source: true } } },
     orderBy: [{ grade: "asc" }, { score: "desc" }]

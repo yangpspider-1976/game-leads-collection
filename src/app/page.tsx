@@ -3,6 +3,7 @@ import { Shell } from "@/components/shell";
 import { DashboardActionForm } from "@/components/dashboard-action-form";
 import { DashboardRecentLeadsTable } from "@/components/dashboard-recent-leads-table";
 import { DashboardStatsTabs } from "@/components/dashboard-stats-tabs";
+import { nonKoreanCompanyWhere } from "@/lib/korea-exclusion";
 import { getOperationsSettings } from "@/lib/operations-settings";
 
 export default async function DashboardPage() {
@@ -26,20 +27,21 @@ export default async function DashboardPage() {
     operationsSettings
   ] =
     await Promise.all([
-      prisma.outreachMessage.count({ where: { channel: "email", status: "sent", updatedAt: { gte: today } } }),
+      prisma.outreachMessage.count({ where: { channel: "email", status: "sent", updatedAt: { gte: today }, opportunity: { company: nonKoreanCompanyWhere } } }),
       prisma.article.count({ where: { createdAt: { gte: today } } }),
       prisma.article.count({ where: { processed: true, createdAt: { gte: today } } }),
       prisma.article.count({ where: { processed: false, createdAt: { gte: today } } }),
-      prisma.opportunity.count({ where: { grade: "A", createdAt: { gte: today } } }),
-      prisma.opportunity.count({ where: { createdAt: { gte: today } } }),
-      prisma.outreachMessage.count({ where: { channel: "email", status: "sent" } }),
+      prisma.opportunity.count({ where: { grade: "A", createdAt: { gte: today }, company: nonKoreanCompanyWhere } }),
+      prisma.opportunity.count({ where: { createdAt: { gte: today }, company: nonKoreanCompanyWhere } }),
+      prisma.outreachMessage.count({ where: { channel: "email", status: "sent", opportunity: { company: nonKoreanCompanyWhere } } }),
       prisma.article.count(),
       prisma.article.count({ where: { processed: true } }),
       prisma.article.count({ where: { processed: false } }),
-      prisma.opportunity.count(),
-      prisma.opportunity.count({ where: { grade: "A" } }),
+      prisma.opportunity.count({ where: { company: nonKoreanCompanyWhere } }),
+      prisma.opportunity.count({ where: { grade: "A", company: nonKoreanCompanyWhere } }),
       prisma.crawlRun.findFirst({ orderBy: { startedAt: "desc" } }),
       prisma.opportunity.findMany({
+        where: { company: nonKoreanCompanyWhere },
         include: { company: true, game: true, article: { include: { source: true } } },
         orderBy: [{ grade: "asc" }, { score: "desc" }],
         take: 8

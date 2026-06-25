@@ -1,11 +1,17 @@
 import type { Article, Source } from "@prisma/client";
 import { analyzeArticle } from "./openai-analysis";
+import { isKoreanArticle, isKoreanCountry } from "./korea-exclusion";
 import { shouldAnalyzeArticle } from "./prefilter";
 import { prisma } from "./prisma";
 
 type ArticleWithSource = Article & { source: Source };
 
 export async function processArticle(article: ArticleWithSource) {
+  if (isKoreanArticle(article)) {
+    await prisma.article.update({ where: { id: article.id }, data: { processed: true, excluded: true } });
+    return { status: "excluded" as const, provider: "korea_exclusion" as const };
+  }
+
   const prefilter = shouldAnalyzeArticle(article);
   if (prefilter.action === "exclude") {
     await prisma.article.update({ where: { id: article.id }, data: { processed: true, excluded: true } });
@@ -14,6 +20,11 @@ export async function processArticle(article: ArticleWithSource) {
 
   const result = await analyzeArticle(article);
   const analysis = result.analysis;
+
+  if (isKoreanCountry(analysis.company.country)) {
+    await prisma.article.update({ where: { id: article.id }, data: { processed: true, excluded: true } });
+    return { status: "excluded" as const, provider: result.provider };
+  }
 
   if (result.fullContent !== article.rawContent && result.fullContent.length > article.rawContent.length) {
     await prisma.article.update({
@@ -89,7 +100,6 @@ export function prioritizeArticles<T extends { source: { region: string; priorit
 }
 
 function scoreRegion(region: string) {
-  if (region === "korea") return 3;
   if (region === "japan") return 2;
   if (region === "north_america") return 1;
   return 0;

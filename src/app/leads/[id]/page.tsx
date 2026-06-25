@@ -5,6 +5,7 @@ import { LeadDetailComposeEmail } from "@/components/lead-detail-compose-email";
 import { LoadingForm } from "@/components/loading-form";
 import { Shell } from "@/components/shell";
 import { getEmailBodyTemplate } from "@/lib/email-template";
+import { isKoreanCompany } from "@/lib/korea-exclusion";
 import { prisma } from "@/lib/prisma";
 
 export default async function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -14,6 +15,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     include: { company: true, game: true, article: { include: { source: true } }, outreachMessages: true }
   });
   if (!lead) notFound();
+  if (isKoreanCompany(lead.company)) notFound();
   const emailBodyTemplate = await getEmailBodyTemplate();
   const enrichmentSources = parseJsonArray(lead.company.enrichmentSources);
   const secondaryEmails = parseJsonArray(lead.company.secondaryEmails);
