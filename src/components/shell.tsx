@@ -6,10 +6,12 @@ import { getAutomationStatus } from "@/lib/automation-runner";
 export function Shell({
   title,
   subtitle,
+  automationStatusBar,
   children
 }: {
   title: string;
   subtitle?: string;
+  automationStatusBar?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (
@@ -19,7 +21,7 @@ export function Shell({
         <SidebarNav />
       </aside>
       <main className="main">
-        <AutomationStatusBarLoader />
+        {automationStatusBar === undefined ? <AutomationStatusBarLoader /> : automationStatusBar}
         <div className="topbar">
           <div>
             <h1>{title}</h1>

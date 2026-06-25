@@ -6,7 +6,7 @@ import { Shell } from "../components/shell";
 describe("Shell", () => {
   it("renders navigation and page title", () => {
     render(
-      React.createElement(Shell, { title: "Test Screen", subtitle: "Subtitle" }, React.createElement("p", null, "Body"))
+      React.createElement(Shell, { title: "Test Screen", subtitle: "Subtitle", automationStatusBar: null }, React.createElement("p", null, "Body"))
     );
 
     expect(screen.getByText("GameLead Radar")).toBeInTheDocument();
