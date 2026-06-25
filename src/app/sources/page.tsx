@@ -1,7 +1,8 @@
-import { BadgeCheck, Power, PowerOff, Plus, Radio, Search } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Shell } from "@/components/shell";
 import { HelpModal } from "@/components/help-modal";
 import { LoadingForm } from "@/components/loading-form";
+import { RegisteredSourcesTable } from "@/components/registered-sources-table";
 import { prisma } from "@/lib/prisma";
 import { sourceTypes } from "@/lib/source-validation";
 
@@ -91,78 +92,13 @@ export default async function SourcesPage() {
           <h2>Registered Sources</h2>
           <HelpModal title="Registered Sources Columns" items={registeredSourceHelp} buttonLabel="Table Help" />
         </div>
-        <div className="table-wrap">
-          <div className="table-scroll">
-            <table className="sources-table">
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Region</th>
-                <th>Language</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Priority</th>
-                <th>Reliability</th>
-                <th>Failures</th>
-                <th>Active</th>
-                <th>Last Verified</th>
-                <th>Last Crawl</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sources.map((source) => (
-                <tr key={source.id}>
-                  <td className="source-main-cell">
-                    <strong>{source.name}</strong>
-                    <a className="truncate-link source-url" href={source.url} title={source.url} target="_blank">
-                      {source.url}
-                    </a>
-                    {source.resolvedFeedUrl ? (
-                      <a className="truncate-link source-url muted-link" href={source.resolvedFeedUrl} title={source.resolvedFeedUrl} target="_blank">
-                        Feed: {source.resolvedFeedUrl}
-                      </a>
-                    ) : null}
-                    {source.notes ? <span className="source-note">{source.notes}</span> : null}
-                  </td>
-                  <td>{source.region}</td>
-                  <td>{source.language}</td>
-                  <td>{source.sourceType}</td>
-                  <td title={source.verificationError ?? undefined}>
-                    <span className={`badge status-${source.verificationStatus}`}>{source.verificationStatus}</span>
-                    {source.verificationError ? <span className="cell-subtle error-text">{source.verificationError}</span> : null}
-                  </td>
-                  <td>{source.priority}</td>
-                  <td>{source.reliability}</td>
-                  <td>{source.consecutiveFailures}</td>
-                  <td>{source.active ? "Yes" : "No"}</td>
-                  <td>{source.lastVerifiedAt?.toLocaleDateString() ?? "Never"}</td>
-                  <td>{source.lastCrawledAt?.toLocaleDateString() ?? "Never"}</td>
-                  <td>
-                    <div className="actions source-actions">
-                      <LoadingForm action={`/api/sources/${source.id}/verify`} loadingLabel={`Verifying ${source.name}`}>
-                        <button className="button secondary" type="submit"><BadgeCheck size={16} /> Verify</button>
-                      </LoadingForm>
-                      <LoadingForm action={`/api/sources/${source.id}/discover-rss`} loadingLabel={`Discovering RSS for ${source.name}`}>
-                        <button className="button secondary" type="submit"><Search size={16} /> Discover RSS</button>
-                      </LoadingForm>
-                      <LoadingForm action={`/api/sources/${source.id}/crawl`} loadingLabel={`Crawling ${source.name}`}>
-                        <button className="button secondary" type="submit"><Radio size={16} /> Crawl Now</button>
-                      </LoadingForm>
-                      <LoadingForm action={`/api/sources/${source.id}/toggle`} loadingLabel={`${source.active ? "Deactivating" : "Activating"} ${source.name}`}>
-                        <button className="button secondary" type="submit">
-                          {source.active ? <PowerOff size={16} /> : <Power size={16} />}
-                          {source.active ? "Deactivate" : "Activate"}
-                        </button>
-                      </LoadingForm>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            </table>
-          </div>
-        </div>
+        <RegisteredSourcesTable sources={sources.map((source) => ({
+          ...source,
+          lastVerifiedAt: source.lastVerifiedAt?.toLocaleDateString() ?? "Never",
+          lastCrawledAt: source.lastCrawledAt?.toLocaleDateString() ?? "Never",
+          createdAt: undefined,
+          updatedAt: undefined
+        }))} />
       </section>
     </Shell>
   );
