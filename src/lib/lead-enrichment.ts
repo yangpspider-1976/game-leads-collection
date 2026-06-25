@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import type { Company } from "@prisma/client";
+import type { Article, Company, Game, Source } from "@prisma/client";
 import { prisma } from "./prisma";
 import { crawlerHeaders } from "./source-validation";
 
@@ -33,6 +33,11 @@ type WebsiteDiscovery = {
   phones: string[];
 };
 
+type EnrichmentContext = {
+  article?: (Pick<Article, "url" | "rawContent" | "summary"> & { source?: Pick<Source, "url"> | null }) | null;
+  game?: Pick<Game, "steamUrl" | "appStoreUrl" | "googlePlayUrl"> | null;
+};
+
 type SocialKey = "facebookUrl" | "instagramUrl" | "linkedinUrl" | "tiktokUrl" | "youtubeUrl" | "twitterUrl";
 
 const socialHosts: Array<[SocialKey, RegExp]> = [
@@ -63,38 +68,40 @@ const nonOfficialWebsiteHosts = [
 export async function enrichOpportunityLead(opportunityId: string) {
   const opportunity = await prisma.opportunity.findUniqueOrThrow({
     where: { id: opportunityId },
-    include: { company: true }
+    include: { company: true, article: { include: { source: true } }, game: true }
   });
 
-  return enrichCompany(opportunity.company);
+  return enrichCompany(opportunity.company, { article: opportunity.article, game: opportunity.game });
 }
 
-export async function enrichCompany(company: Company) {
+export async function enrichCompany(company: Company, context: EnrichmentContext = {}) {
   await prisma.company.update({
     where: { id: company.id },
     data: { enrichmentStatus: "processing", enrichmentError: null }
   });
 
-  const discovery = company.website ? null : await discoverCompanyWebsite(company);
-  const website = company.website ?? discovery?.url;
-
-  if (!website) {
-    const searchProviderMessage = hasSearchProvider()
-      ? "No likely official website was found by web discovery."
-      : "No website URL is available and no search provider is configured. Add SERPER_API_KEY, SERPAPI_API_KEY, Google Custom Search keys, or BING_SEARCH_API_KEY.";
-    return prisma.company.update({
-      where: { id: company.id },
-      data: {
-        websiteStatus: "not_found",
-        enrichmentStatus: "manual_review",
-        enrichmentConfidence: 20,
-        enrichmentError: searchProviderMessage,
-        lastEnrichedAt: new Date()
-      }
-    });
-  }
-
   try {
+    const discovery = company.website ? null : await discoverCompanyWebsite(company, context);
+    const website = company.website ?? discovery?.url;
+
+    if (!website) {
+      const searchProviderMessage = hasSearchProvider()
+        ? searchProviderDiscoveryEnabled()
+          ? "No likely official website was found by web discovery."
+          : "No likely official website was found from existing article/source URLs. Search-provider discovery is disabled to avoid credit use."
+        : "No website URL is available and no search provider is configured. Add SERPER_API_KEY, SERPAPI_API_KEY, Google Custom Search keys, or BING_SEARCH_API_KEY.";
+      return prisma.company.update({
+        where: { id: company.id },
+        data: {
+          websiteStatus: "not_found",
+          enrichmentStatus: "manual_review",
+          enrichmentConfidence: 20,
+          enrichmentError: searchProviderMessage,
+          lastEnrichedAt: new Date()
+        }
+      });
+    }
+
     const homepageUrl = normalizeWebsiteUrl(website);
     const homepage = await scanPage(homepageUrl);
     const candidateUrls = pickLikelyContactUrls(homepage, homepageUrl);
@@ -110,7 +117,7 @@ export async function enrichCompany(company: Company) {
 
     const pages = [homepage, ...extraPages];
     const emails = usefulEmails(unique(pages.flatMap((page) => page.emails)));
-    const discoveredPhones = await discoverCompanyPhones(company);
+    const discoveredPhones = await discoverCompanyPhonesSafely(company);
     const phones = unique([...pages.flatMap((page) => page.phones), ...(discovery?.phones ?? []), ...discoveredPhones]).slice(
       0,
       maxSecondaryContactItems + 1
@@ -185,8 +192,24 @@ function normalizeWebsiteUrl(value: string) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-async function discoverCompanyWebsite(company: Company): Promise<WebsiteDiscovery | null> {
+async function discoverCompanyWebsite(company: Company, context: EnrichmentContext = {}): Promise<WebsiteDiscovery | null> {
+  const noCreditCandidate = await discoverCompanyWebsiteFromExistingUrls(company, context);
+  if (noCreditCandidate) return noCreditCandidate;
+
+  if (!searchProviderDiscoveryEnabled()) {
+    return null;
+  }
+
   const candidates = await searchWebsiteCandidates(company);
+  return pickWebsiteFromCandidates(company, candidates);
+}
+
+async function discoverCompanyWebsiteFromExistingUrls(company: Company, context: EnrichmentContext): Promise<WebsiteDiscovery | null> {
+  const candidates = await existingWebsiteCandidates(company, context);
+  return pickWebsiteFromCandidates(company, candidates);
+}
+
+async function pickWebsiteFromCandidates(company: Company, candidates: SearchCandidate[]): Promise<WebsiteDiscovery | null> {
   for (const candidate of candidates.slice(0, Number(process.env.WEBSITE_DISCOVERY_MAX_CANDIDATES ?? 5))) {
     const homepageUrl = candidateToHomepage(candidate.url);
     if (!homepageUrl || isLikelyNonOfficialHost(homepageUrl)) continue;
@@ -206,24 +229,93 @@ async function discoverCompanyWebsite(company: Company): Promise<WebsiteDiscover
   return null;
 }
 
+async function existingWebsiteCandidates(company: Company, context: EnrichmentContext): Promise<SearchCandidate[]> {
+  const directLinks: PageLink[] = collectExistingLinks(context);
+  const articleLinks = context.article?.url ? await linksFromKnownPage(context.article.url) : [];
+  const likelyLinks = uniqueByUrl([...directLinks, ...articleLinks]).filter((link) => isLikelyOfficialLinkForCompany(link, company));
+
+  return likelyLinks.map((link) => ({
+    title: link.text,
+    url: link.url,
+    snippet: "Existing article/source URL",
+    provider: "existing_urls"
+  }));
+}
+
+function collectExistingLinks(context: EnrichmentContext) {
+  const links: PageLink[] = [];
+  const add = (value: string | null | undefined, text = "") => {
+    if (!value) return;
+    for (const url of extractHttpUrls(value)) {
+      links.push({ url, text });
+    }
+  };
+
+  add(context.article?.url, "Article URL");
+  add(context.article?.source?.url, "Source URL");
+  add(context.article?.summary, "Article summary");
+  add(context.article?.rawContent, "Article content");
+  add(context.game?.steamUrl, "Steam page");
+  add(context.game?.appStoreUrl, "App Store page");
+  add(context.game?.googlePlayUrl, "Google Play page");
+
+  return links;
+}
+
+async function linksFromKnownPage(url: string) {
+  try {
+    const page = await scanPage(url);
+    return page.links;
+  } catch {
+    return [];
+  }
+}
+
+function isLikelyOfficialLinkForCompany(link: PageLink, company: Company) {
+  const homepageUrl = candidateToHomepage(link.url);
+  if (!homepageUrl || isLikelyNonOfficialHost(homepageUrl)) return false;
+  return domainMatchesCompany(homepageUrl, company) || candidateLikelyMatchesCompany({ title: link.text, url: link.url, provider: "existing_urls" }, company);
+}
+
 async function discoverCompanyPhones(company: Company) {
+  if (!phoneSearchDiscoveryEnabled()) return [];
   const candidates = await searchWebsiteCandidates({ ...company, name: `${company.name} contact phone number` });
   return unique(candidates.flatMap(extractPhonesFromSearchText)).slice(0, maxSecondaryContactItems + 1);
 }
 
 async function searchWebsiteCandidates(company: Company): Promise<SearchCandidate[]> {
   const query = `${company.name} ${company.country} game company official website`;
+  const providerErrors: string[] = [];
   if (process.env.SERPER_API_KEY) {
-    return searchSerper(query, process.env.SERPER_API_KEY);
+    try {
+      return await searchSerper(query, process.env.SERPER_API_KEY);
+    } catch (error) {
+      providerErrors.push(`Serper: ${errorMessage(error)}`);
+    }
   }
   if (process.env.SERPAPI_API_KEY || process.env.SEARCH_API_KEY) {
-    return searchSerpApi(query, process.env.SERPAPI_API_KEY ?? process.env.SEARCH_API_KEY ?? "");
+    try {
+      return await searchSerpApi(query, process.env.SERPAPI_API_KEY ?? process.env.SEARCH_API_KEY ?? "");
+    } catch (error) {
+      providerErrors.push(`SerpAPI: ${errorMessage(error)}`);
+    }
   }
   if (process.env.GOOGLE_SEARCH_API_KEY && (process.env.GOOGLE_SEARCH_CX || process.env.GOOGLE_CSE_ID)) {
-    return searchGoogleCustom(query, process.env.GOOGLE_SEARCH_API_KEY, process.env.GOOGLE_SEARCH_CX ?? process.env.GOOGLE_CSE_ID ?? "");
+    try {
+      return await searchGoogleCustom(query, process.env.GOOGLE_SEARCH_API_KEY, process.env.GOOGLE_SEARCH_CX ?? process.env.GOOGLE_CSE_ID ?? "");
+    } catch (error) {
+      providerErrors.push(`Google Custom Search: ${errorMessage(error)}`);
+    }
   }
   if (process.env.BING_SEARCH_API_KEY) {
-    return searchBing(query, process.env.BING_SEARCH_API_KEY);
+    try {
+      return await searchBing(query, process.env.BING_SEARCH_API_KEY);
+    } catch (error) {
+      providerErrors.push(`Bing: ${errorMessage(error)}`);
+    }
+  }
+  if (providerErrors.length > 0) {
+    throw new Error(`Website discovery failed. ${providerErrors.join("; ")}`);
   }
   return [];
 }
@@ -238,7 +330,7 @@ async function searchSerper(query: string, apiKey: string): Promise<SearchCandid
     body: JSON.stringify({ q: query, num: 8 }),
     signal: AbortSignal.timeout(Number(process.env.WEBSITE_DISCOVERY_TIMEOUT_MS ?? 10000))
   });
-  if (!response.ok) throw new Error(`Serper search returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error(await searchHttpError("Serper search", response));
   const data = (await response.json()) as { organic?: Array<{ title?: string; link?: string; snippet?: string }> };
   return (data.organic ?? [])
     .filter((item) => item.link)
@@ -287,8 +379,43 @@ async function fetchJson(url: URL, headers: Record<string, string> = {}) {
     headers: { ...crawlerHeaders(), ...headers },
     signal: AbortSignal.timeout(Number(process.env.WEBSITE_DISCOVERY_TIMEOUT_MS ?? 10000))
   });
-  if (!response.ok) throw new Error(`Website discovery search returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error(await searchHttpError("Website discovery search", response));
   return response.json();
+}
+
+async function discoverCompanyPhonesSafely(company: Company) {
+  try {
+    return await discoverCompanyPhones(company);
+  } catch (error) {
+    await prisma.systemLog.create({
+      data: {
+        level: "warning",
+        module: "lead-enrichment",
+        message: `${company.name}: phone discovery skipped: ${errorMessage(error)}`,
+        metadata: JSON.stringify({ companyId: company.id, website: company.website })
+      }
+    });
+    return [];
+  }
+}
+
+async function searchHttpError(label: string, response: Response) {
+  const reason = await searchErrorReason(response);
+  return `${label} returned HTTP ${response.status}${reason ? `: ${reason}` : ""}`;
+}
+
+async function searchErrorReason(response: Response) {
+  try {
+    const data = (await response.json()) as { message?: string; error?: string | { status?: string; message?: string } };
+    if (typeof data.error === "string") return data.error;
+    return data.message ?? data.error?.status ?? data.error?.message ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error";
 }
 
 function hasSearchProvider() {
@@ -299,6 +426,14 @@ function hasSearchProvider() {
       (process.env.GOOGLE_SEARCH_API_KEY && (process.env.GOOGLE_SEARCH_CX || process.env.GOOGLE_CSE_ID)) ||
       process.env.BING_SEARCH_API_KEY
   );
+}
+
+function searchProviderDiscoveryEnabled() {
+  return process.env.ENRICHMENT_ALLOW_SEARCH_CREDITS === "true";
+}
+
+function phoneSearchDiscoveryEnabled() {
+  return process.env.ENRICHMENT_ALLOW_PHONE_SEARCH_CREDITS === "true";
 }
 
 async function scanPage(url: string): Promise<PageScan> {
@@ -395,6 +530,22 @@ function contactTextScore(text: string) {
 
 export function extractEmails(input: string) {
   return unique(input.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).map((email) => email.toLowerCase());
+}
+
+export function extractHttpUrls(input: string) {
+  const matches = input.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [];
+  return unique(
+    matches
+      .map((url) => url.replace(/[.,;:!?]+$/g, ""))
+      .filter((url) => {
+        try {
+          const parsed = new URL(url);
+          return ["http:", "https:"].includes(parsed.protocol);
+        } catch {
+          return false;
+        }
+      })
+  );
 }
 
 export function usefulEmails(emails: string[]) {

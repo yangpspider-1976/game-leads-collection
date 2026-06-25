@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestContactPageUrl, extractEmails, extractPhones, pickLikelyContactUrls, usefulEmails } from "./lead-enrichment";
+import { bestContactPageUrl, extractEmails, extractHttpUrls, extractPhones, pickLikelyContactUrls, usefulEmails } from "./lead-enrichment";
 
 describe("lead enrichment contact scanning", () => {
   it("prefers explicit contact links over about pages", () => {
@@ -109,5 +109,12 @@ describe("lead enrichment contact scanning", () => {
     );
 
     expect(usefulEmails(emails)).toEqual(["contact@ctw.inc"]);
+  });
+
+  it("extracts existing article URLs without trailing punctuation", () => {
+    expect(extractHttpUrls("Official site: https://samplestudio.example.com/contact. Steam: https://store.steampowered.com/app/12345)")).toEqual([
+      "https://samplestudio.example.com/contact",
+      "https://store.steampowered.com/app/12345"
+    ]);
   });
 });
