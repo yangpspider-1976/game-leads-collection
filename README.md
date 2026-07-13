@@ -1,6 +1,6 @@
 # GameLead Radar
 
-GameLead Radar is a local Next.js + TypeScript + SQLite/Prisma web app for finding QROAD sales opportunities from game industry news. It focuses on Korea, Japan, and North America; Steam and mobile games; and pre-launch or new-launch signals such as CBT, OBT, pre-registration, Steam wishlist, soft launch, regional launch, platform expansion, and relaunch.
+GameLead Radar is a local Next.js + TypeScript + SQLite/Prisma web app for finding QROAD sales opportunities from game industry news. It focuses on Japan and North America; Steam and mobile games; and pre-launch or new-launch signals such as CBT, OBT, pre-registration, Steam wishlist, soft launch, regional launch, platform expansion, and relaunch.
 
 ## Safety Boundaries
 
