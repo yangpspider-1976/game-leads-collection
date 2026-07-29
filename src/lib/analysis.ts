@@ -241,10 +241,6 @@ function buildEnglishEvidencePoints(input: {
   return points;
 }
 
-function extractQuotedTitle(title: string) {
-  return title.match(/["'“”]([^"'“”]+)["'“”]/)?.[1] ?? null;
-}
-
 function extractEntityName(title: string) {
   return title.match(/^([A-Z][A-Za-z0-9 .&-]{2,40})\s+(announces|reveals|opens|starts|plans|recruits)/)?.[1] ?? null;
 }
@@ -256,8 +252,41 @@ export function countryFromSourceRegion(region?: string): AiAnalysis["company"][
   return "Unknown";
 }
 
-function extractGameTitleFromText(title: string) {
-  return title.match(/["'“”「」『』]([^"'“”「」『』]+)["'“”「」『』]/)?.[1] ?? extractQuotedTitle(title);
+// Paired quote delimiters that reliably wrap a title. Straight/curly apostrophes are
+// intentionally excluded: an in-word apostrophe (e.g. "Sony's") would otherwise be read
+// as an opening quote and capture the rest of the sentence as a bogus game title.
+const gameTitleQuotePairs: Array<[string, string]> = [
+  ['"', '"'],
+  ["“", "”"],
+  ["「", "」"],
+  ["『", "』"]
+];
+
+function escapeRegExpLiteral(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sanitizeGameTitleCandidate(candidate?: string | null) {
+  if (!candidate) return null;
+  const value = candidate.trim();
+  if (value.length < 2 || value.length > 80) return null;
+  // Prose fragments captured after an in-word apostrophe start mid-sentence (lowercase);
+  // real titles begin with an uppercase letter, digit, or a non-Latin character.
+  if (/^[a-z]/.test(value)) return null;
+  if (value.split(/\s+/).length > 12) return null;
+  // Reject sentence-like text containing internal sentence punctuation.
+  if (/[.!?。！？]\s/.test(value)) return null;
+  return value;
+}
+
+function extractGameTitleFromText(text: string) {
+  for (const [open, close] of gameTitleQuotePairs) {
+    const excludedChars = open === close ? escapeRegExpLiteral(close) : `${escapeRegExpLiteral(open)}${escapeRegExpLiteral(close)}`;
+    const pattern = new RegExp(`${escapeRegExpLiteral(open)}([^${excludedChars}]{2,80}?)${escapeRegExpLiteral(close)}`);
+    const candidate = sanitizeGameTitleCandidate(text.match(pattern)?.[1]);
+    if (candidate) return candidate;
+  }
+  return null;
 }
 
 export function extractCompanyNameFromTitle(title: string) {

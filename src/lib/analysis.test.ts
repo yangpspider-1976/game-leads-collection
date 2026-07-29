@@ -15,6 +15,30 @@ describe("analyzeArticleHeuristically", () => {
     expect(result.opportunity.recommended_packages).toContain("Pre-Registration Marketing Package");
   });
 
+  it("does not treat an in-word apostrophe as a game title quote", () => {
+    const result = analyzeArticleHeuristically({
+      title: "Sony reveals new pre-registration lineup",
+      url: "https://example.com/state-of-play",
+      publishedAt: new Date(),
+      rawContent:
+        'Sony\'s latest State of Play showcase revealed a series of new games and release dates, alongside the expected deep-dives on Marvel"s upcoming titles.'
+    });
+
+    expect(result.game.title).not.toMatch(/^s latest/);
+    expect(result.game.title).toBe("Sony reveals new pre-registration lineup");
+  });
+
+  it("extracts a game title wrapped in Japanese quote brackets", () => {
+    const result = analyzeArticleHeuristically({
+      title: "新作モバイルRPGが事前登録を開始",
+      url: "https://example.com/jp-news",
+      publishedAt: new Date(),
+      rawContent: "開発元は「ドラゴンズドグマ 2」の事前登録をApp StoreとGoogle Playで開始した。"
+    });
+
+    expect(result.game.title).toBe("ドラゴンズドグマ 2");
+  });
+
   it("excludes post-launch review-only articles", () => {
     const result = analyzeArticleHeuristically({
       title: "Review: console-only game is out now",
