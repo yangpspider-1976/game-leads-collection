@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { ExternalLink, FilePenLine, RotateCcw, Save, SearchCheck, Tag } from "lucide-react";
+import { ExternalLink, RotateCcw, Save, SearchCheck, Tag } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { LeadDetailComposeEmail } from "@/components/lead-detail-compose-email";
 import { LoadingForm } from "@/components/loading-form";
@@ -12,7 +12,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const lead = await prisma.opportunity.findUnique({
     where: { id },
-    include: { company: true, game: true, article: { include: { source: true } }, outreachMessages: true }
+    include: { company: true, game: true, article: { include: { source: true } } }
   });
   if (!lead) notFound();
   if (isKoreanCompany(lead.company)) notFound();
@@ -178,19 +178,6 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           ) : (
             <p>No enrichment sources stored yet.</p>
           )}
-        </section>
-        <section className="panel">
-          <h2>Outreach Drafts</h2>
-          <LoadingForm action={`/api/leads/${lead.id}/drafts`} loadingLabel="Generating outreach drafts" style={{ marginBottom: 16 }}>
-            <button className="button" type="submit"><FilePenLine size={16} /> Generate Drafts</button>
-          </LoadingForm>
-          {lead.outreachMessages.map((message) => (
-            <div className="card" key={message.id} style={{ padding: 14, marginBottom: 12 }}>
-              <p><strong>{message.channel}</strong> {message.subject ? `· ${message.subject}` : null}</p>
-              <p className="mono">{message.body}</p>
-            </div>
-          ))}
-          {lead.outreachMessages.length === 0 ? <p>No drafts yet. Draft generation is limited to A/B leads.</p> : null}
         </section>
       </div>
     </Shell>
